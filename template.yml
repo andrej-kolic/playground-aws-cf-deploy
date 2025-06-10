@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CloudFormation template to create an S3 bucket for hosting a static website.
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: The name of the S3 bucket. Must be globally unique.
+
+Resources:
+  WebAppS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Ref BucketName
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+
+  WebAppS3BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref WebAppS3Bucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref WebAppS3Bucket
+                - /*
+
+Outputs:
+  WebsiteURL:
+    Value: !GetAtt WebAppS3Bucket.WebsiteURL
+    Description: 'URL for the website hosted on S3'
+  BucketName:
+    Value: !Ref WebAppS3Bucket
+    Description: 'Name of the S3 bucket'

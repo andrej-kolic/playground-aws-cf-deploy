@@ -1,0 +1,57 @@
+# This workflow deploys a static website to an S3 bucket using CloudFormation.
+
+name: Deploy Website to S3
+
+on:
+  # Run this workflow on a push to the main branch
+#   push:
+#     branches:
+#       - main
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# Grant the GITHUB_TOKEN permissions to get an OIDC token
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # The AWS region to connect to
+          aws-region: ${{ secrets.AWS_REGION }}
+          # The ARN of the role to assume
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          # The duration of the session, in seconds. Defaults to 1 hour.
+          role-session-name: GitHubActionsSession
+
+      - name: Deploy CloudFormation Stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: my-s3-website-stack # Name of the CloudFormation stack
+          template: template.yml
+          # Pass the bucket name from GitHub secrets to the template
+          parameter-overrides: "BucketName=${{ secrets.S3_BUCKET_NAME }}"
+          # Wait for the stack to be created/updated
+          wait: true
+
+      - name: Deploy static site to S3
+        run: |
+          aws s3 sync ./src s3://${{ secrets.S3_BUCKET_NAME }} --delete
+        
+      - name: Output Website URL
+        run: |
+          # Query the CloudFormation stack for the WebsiteURL output
+          URL=$(aws cloudformation describe-stacks --stack-name my-s3-website-stack --query "Stacks[0].Outputs[?OutputKey=='WebsiteURL'].OutputValue" --output text)
+          echo "Website deployed successfully!"
+          echo "URL: $URL"
