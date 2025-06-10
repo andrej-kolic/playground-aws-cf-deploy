@@ -4,6 +4,7 @@ This project contains a simple setup to automatically deploy a static HTML websi
 
 ## Project Structure
 
+```
 .
 ├── .github/
 │   └── workflows/
@@ -12,6 +13,7 @@ This project contains a simple setup to automatically deploy a static HTML websi
 │   └── index.html        # Your simple HTML file
 ├── template.yml            # CloudFormation template
 └── package.json            # Node.js project file
+```
 
 ## Prerequisites: AWS & GitHub Setup
 
