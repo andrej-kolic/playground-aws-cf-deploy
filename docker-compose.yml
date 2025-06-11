@@ -1,0 +1,16 @@
+version: '3.8' # Specify the Docker Compose file format version
+
+services:
+  aws-version-checker: # Define a service named 'aws-version-checker'
+    build: . # Instruct Docker Compose to build the image from the Dockerfile in the current directory
+    image: aws-test # Use the image built from the Dockerfile in the previous example
+    container_name: aws-test-container # Assign a specific name to the container
+
+    #1
+    entrypoint: []
+    # command: ["aws", "--version"]
+    command: ["ls", "-la"]
+
+    #2
+    # command: ["--version"] # command will output the AWS CLI version to the console
+    # and then the container will exit.
