@@ -43,7 +43,7 @@ jobs:
           # Pass the bucket name from GitHub secrets to the template
           parameter-overrides: "BucketName=${{ secrets.S3_BUCKET_NAME }}"
           # Wait for the stack to be created/updated
-          wait: true
+          # wait: true
 
       - name: Deploy static site to S3
         run: |
