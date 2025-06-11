@@ -5,7 +5,9 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "docker build -t aws-test:cl .",
+    "aws": "docker run --rm -it -v ~/.aws:/root/.aws --name aws-test-cl aws-test:cl",
+    "compose-up": "docker compose up --build"
   },
   "keywords": [],
   "author": "",
