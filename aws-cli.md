@@ -21,3 +21,13 @@ docker run -it --entrypoint "" aws-test:cl ls -la /app
 docker run -it -v ~/.aws:/root/.aws aws-test:cl ls -la /app
 docker compose up --build
 ```
+
+```sh
+aws cloudformation create-stack --stack-name my-s3-website-stack --template-body file://template.yml --parameters ParameterKey=BucketName,ParameterValue=rey-playground-cf-deploy --capabilities CAPABILITY_IAM
+
+aws cloudformation delete-stack --stack-name my-s3-website-stack
+
+aws cloudformation describe-stacks --stack-name my-s3-website-stack
+
+aws cloudformation describe-stack-events --stack-name my-s3-website-stack
+```

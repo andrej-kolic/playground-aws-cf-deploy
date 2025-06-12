@@ -15,8 +15,11 @@ Resources:
       WebsiteConfiguration:
         IndexDocument: index.html
         ErrorDocument: index.html
-      # throws an error: Bucket cannot have public ACLs set with BlockPublicAccess enabled
-      # AccessControl: PublicRead
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
 
   WebAppS3BucketPolicy:
     Type: 'AWS::S3::BucketPolicy'

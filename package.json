@@ -6,6 +6,7 @@
   "main": "index.js",
   "scripts": {
     "build": "docker build -t aws-test:cl .",
+    "_aws": "docker run --rm -it -v ~/.aws:/root/.aws:ro --name aws-test-cl aws-test:cl",
     "aws": "docker run --rm -it -v ~/.aws:/root/.aws --name aws-test-cl aws-test:cl",
     "compose-up": "docker compose up --build"
   },
