@@ -12,10 +12,11 @@ Resources:
     Type: 'AWS::S3::Bucket'
     Properties:
       BucketName: !Ref BucketName
-      AccessControl: PublicRead
       WebsiteConfiguration:
         IndexDocument: index.html
         ErrorDocument: index.html
+      # throws an error: Bucket cannot have public ACLs set with BlockPublicAccess enabled
+      # AccessControl: PublicRead
 
   WebAppS3BucketPolicy:
     Type: 'AWS::S3::BucketPolicy'
