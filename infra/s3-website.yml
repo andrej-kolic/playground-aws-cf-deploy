@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CloudFormation template to create an S3 bucket for hosting a static website
+  with comprehensive configuration for public access and website hosting.
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: The name of the S3 bucket. Must be globally unique.
+    MinLength: 3
+    MaxLength: 63
+    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+    ConstraintDescription: >
+      Bucket name must be between 3 and 63 characters, start and end with lowercase letter or number,
+      and can contain only lowercase letters, numbers, and hyphens.
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name for resource tagging
+
+Resources:
+  # S3 Bucket for static website hosting
+  WebAppS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Ref BucketName
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, HEAD]
+            AllowedOrigins: ['*']
+            MaxAge: 3600
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        CloudWatchConfigurations:
+          - Event: 's3:ObjectCreated:*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: aws-cf-deploy
+        - Key: Purpose
+          Value: StaticWebsiteHosting
+
+  # Bucket Policy for public read access
+  WebAppS3BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref WebAppS3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub '${WebAppS3Bucket}/*'
+          - Sid: AllowCloudFrontOriginAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${CloudFrontOriginAccessIdentity}'
+            Action: 's3:GetObject'
+            Resource: !Sub '${WebAppS3Bucket}/*'
+
+  # CloudFront Origin Access Identity
+  CloudFrontOriginAccessIdentity:
+    Type: 'AWS::CloudFront::CloudFrontOriginAccessIdentity'
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub 'OAI for ${BucketName}'
+
+  # CloudFront Distribution for CDN
+  CloudFrontDistribution:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Comment: !Sub 'CloudFront Distribution for ${BucketName}'
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # Managed-CachingDisabled
+          OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf  # Managed-CORS-S3Origin
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt WebAppS3Bucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${CloudFrontOriginAccessIdentity}'
+        PriceClass: PriceClass_100
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        Tags:
+          - Key: Environment
+            Value: !Ref Environment
+          - Key: Project
+            Value: aws-cf-deploy
+
+Outputs:
+  WebsiteURL:
+    Value: !GetAtt WebAppS3Bucket.WebsiteURL
+    Description: 'URL for the website hosted on S3'
+    Export:
+      Name: !Sub '${AWS::StackName}-WebsiteURL'
+
+  BucketName:
+    Value: !Ref WebAppS3Bucket
+    Description: 'Name of the S3 bucket'
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketName'
+
+  CloudFrontURL:
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+    Description: 'CloudFront distribution URL'
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontURL'
+
+  CloudFrontDistributionId:
+    Value: !Ref CloudFrontDistribution
+    Description: 'CloudFront distribution ID'
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontDistributionId'
+
+  BucketArn:
+    Value: !GetAtt WebAppS3Bucket.Arn
+    Description: 'ARN of the S3 bucket'
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketArn'
+

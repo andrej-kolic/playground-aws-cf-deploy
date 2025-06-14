@@ -1,0 +1,226 @@
+# GitHub Actions Workflow for AWS CF Deploy
+# Place this file in .github/workflows/ directory in your repository
+
+name: Deploy to AWS S3
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  AWS_REGION: eu-west-1
+
+jobs:
+  # Job to validate CloudFormation templates
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate CloudFormation templates
+        run: |
+          aws cloudformation validate-template --template-body file://infra/iam-roles.yml
+          aws cloudformation validate-template --template-body file://infra/s3-website.yml
+
+  # Job to deploy infrastructure
+  deploy-infrastructure:
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    outputs:
+      bucket-name: ${{ steps.deploy.outputs.bucket-name }}
+      cloudfront-url: ${{ steps.deploy.outputs.cloudfront-url }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set environment variables
+        run: |
+          if [ "${{ github.event.inputs.environment }}" != "" ]; then
+            echo "ENVIRONMENT=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "ENVIRONMENT=prod" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            echo "ENVIRONMENT=staging" >> $GITHUB_ENV
+          else
+            echo "ENVIRONMENT=dev" >> $GITHUB_ENV
+          fi
+          echo "BUCKET_NAME=rey-playground-cf-deploy-${ENVIRONMENT}" >> $GITHUB_ENV
+
+      - name: Deploy IAM infrastructure
+        id: deploy-iam
+        run: |
+          cd infra
+          aws cloudformation deploy \
+            --template-file iam-roles.yml \
+            --stack-name "aws-cf-deploy-iam-${ENVIRONMENT}" \
+            --parameter-overrides \
+              GitHubOrg="${{ github.repository_owner }}" \
+              GitHubRepo="${{ github.event.repository.name }}" \
+              Environment="${ENVIRONMENT}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --tags \
+              Environment="${ENVIRONMENT}" \
+              Project=aws-cf-deploy \
+              ManagedBy=GitHub-Actions
+
+      - name: Deploy website infrastructure
+        id: deploy
+        run: |
+          cd infra
+          aws cloudformation deploy \
+            --template-file s3-website.yml \
+            --stack-name "aws-cf-deploy-website-${ENVIRONMENT}" \
+            --parameter-overrides \
+              BucketName="${BUCKET_NAME}" \
+              Environment="${ENVIRONMENT}" \
+            --tags \
+              Environment="${ENVIRONMENT}" \
+              Project=aws-cf-deploy \
+              ManagedBy=GitHub-Actions
+          
+          # Get stack outputs
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "aws-cf-deploy-website-${ENVIRONMENT}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`BucketName`].OutputValue' \
+            --output text)
+          
+          CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
+            --stack-name "aws-cf-deploy-website-${ENVIRONMENT}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' \
+            --output text)
+          
+          echo "bucket-name=${BUCKET_NAME}" >> $GITHUB_OUTPUT
+          echo "cloudfront-url=${CLOUDFRONT_URL}" >> $GITHUB_OUTPUT
+
+  # Job to deploy website content
+  deploy-content:
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set environment variables
+        run: |
+          if [ "${{ github.event.inputs.environment }}" != "" ]; then
+            echo "ENVIRONMENT=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "ENVIRONMENT=prod" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            echo "ENVIRONMENT=staging" >> $GITHUB_ENV
+          else
+            echo "ENVIRONMENT=dev" >> $GITHUB_ENV
+          fi
+
+      - name: Build website (if needed)
+        run: |
+          # Add your build steps here if you have a build process
+          # For example:
+          # npm install
+          # npm run build
+          echo "No build process configured. Using src files directly."
+
+      - name: Deploy to S3
+        run: |
+          aws s3 sync ./src s3://${{ needs.deploy-infrastructure.outputs.bucket-name }} \
+            --delete \
+            --cache-control "max-age=3600"
+
+      - name: Invalidate CloudFront
+        run: |
+          DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name "aws-cf-deploy-website-${ENVIRONMENT}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+            --output text)
+          
+          aws cloudfront create-invalidation \
+            --distribution-id $DISTRIBUTION_ID \
+            --paths "/*"
+
+      - name: Output deployment info
+        run: |
+          echo "🚀 Deployment completed!"
+          echo "📦 S3 Bucket: ${{ needs.deploy-infrastructure.outputs.bucket-name }}"
+          echo "🌐 CloudFront URL: ${{ needs.deploy-infrastructure.outputs.cloudfront-url }}"
+          echo "🔗 Website URL: ${{ needs.deploy-infrastructure.outputs.cloudfront-url }}"
+
+  # Job to run tests (optional)
+  test:
+    runs-on: ubuntu-latest
+    needs: deploy-content
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Test website
+        run: |
+          # Add your testing steps here
+          # For example, using curl to test the website:
+          # curl -f ${{ needs.deploy-infrastructure.outputs.cloudfront-url }}
+          echo "Add your website tests here"
+
+# Cleanup job for pull requests
+  cleanup:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Cleanup PR environment
+        run: |
+          PR_NUMBER=${{ github.event.number }}
+          STACK_NAME="aws-cf-deploy-website-pr-${PR_NUMBER}"
+          
+          # Check if stack exists and delete it
+          if aws cloudformation describe-stacks --stack-name $STACK_NAME 2>/dev/null; then
+            echo "Deleting stack: $STACK_NAME"
+            aws cloudformation delete-stack --stack-name $STACK_NAME
+          else
+            echo "Stack $STACK_NAME does not exist"
+          fi
+

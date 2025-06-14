@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CloudFormation template to create IAM roles and policies for GitHub Actions
+  to deploy to S3 and manage CloudFormation stacks.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Description: GitHub organization or username
+    Default: andrej-kolic
+
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository name (use * for all repos in the org)
+    Default: '*'
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name for resource tagging
+
+Resources:
+  # GitHub OIDC Provider
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCIdentityProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: aws-cf-deploy
+
+  # IAM Role for GitHub Actions
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: GitHubActions-S3-Deploy-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOIDCProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${GitHubRepo}'
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:user/admin'
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref GitHubActionsCFNPolicy
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: aws-cf-deploy
+        - Key: Purpose
+          Value: GitHubActionsDeployment
+
+  # Custom IAM Policy for CloudFormation and S3 operations
+  GitHubActionsCFNPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: GitHubActions-S3-CFN-Policy
+      Description: Policy for GitHub Actions to manage CloudFormation stacks and S3 buckets
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # CloudFormation permissions
+          - Effect: Allow
+            Action:
+              - cloudformation:CreateStack
+              - cloudformation:UpdateStack
+              - cloudformation:DeleteStack
+              - cloudformation:DescribeStacks
+              - cloudformation:DescribeStackEvents
+              - cloudformation:DescribeStackResources
+              - cloudformation:GetTemplateSummary
+              - cloudformation:CreateChangeSet
+              - cloudformation:DescribeChangeSet
+              - cloudformation:ExecuteChangeSet
+              - cloudformation:DeleteChangeSet
+              - cloudformation:ListStacks
+              - cloudformation:CreateUploadBucket
+            Resource: '*'
+          
+          # S3 permissions for bucket management
+          - Effect: Allow
+            Action:
+              - s3:CreateBucket
+              - s3:DeleteBucket
+              - s3:GetBucketLocation
+              - s3:GetBucketVersioning
+              - s3:ListBucket
+              - s3:ListBucketVersions
+              - s3:GetBucketWebsite
+              - s3:PutBucketWebsite
+              - s3:DeleteBucketWebsite
+              - s3:GetBucketCORS
+              - s3:PutBucketCORS
+              - s3:DeleteBucketCORS
+              - s3:GetBucketPolicy
+              - s3:PutBucketPolicy
+              - s3:DeleteBucketPolicy
+              - s3:GetBucketAcl
+              - s3:PutBucketAcl
+              - s3:GetBucketPublicAccessBlock
+              - s3:PutBucketPublicAccessBlock
+              - s3:GetBucketVersioning
+              - s3:PutBucketVersioning
+              - s3:GetBucketNotification
+              - s3:PutBucketNotification
+              - s3:ListAllMyBuckets
+            Resource: 
+              - 'arn:aws:s3:::*'
+          
+          # S3 permissions for object management
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:GetObjectVersion
+              - s3:DeleteObjectVersion
+              - s3:GetObjectAcl
+              - s3:PutObjectAcl
+            Resource: 
+              - 'arn:aws:s3:::*/*'
+          
+          # CloudFront permissions
+          - Effect: Allow
+            Action:
+              - cloudfront:CreateDistribution
+              - cloudfront:UpdateDistribution
+              - cloudfront:DeleteDistribution
+              - cloudfront:GetDistribution
+              - cloudfront:GetDistributionConfig
+              - cloudfront:ListDistributions
+              - cloudfront:CreateOriginAccessIdentity
+              - cloudfront:GetOriginAccessIdentity
+              - cloudfront:DeleteOriginAccessIdentity
+              - cloudfront:CreateInvalidation
+              - cloudfront:GetInvalidation
+              - cloudfront:ListInvalidations
+            Resource: '*'
+          
+          # IAM permissions for CloudFormation service role
+          - Effect: Allow
+            Action:
+              - iam:GetRole
+              - iam:PassRole
+            Resource: 
+              - !Sub 'arn:aws:iam::${AWS::AccountId}:role/CloudFormation-*'
+              - !Sub 'arn:aws:iam::${AWS::AccountId}:role/GitHubActions-*'
+
+  # CloudFormation Service Role
+  CloudFormationServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CloudFormation-Service-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/PowerUserAccess
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: aws-cf-deploy
+        - Key: Purpose
+          Value: CloudFormationService
+
+Outputs:
+  GitHubActionsRoleArn:
+    Description: ARN of the GitHub Actions IAM Role
+    Value: !GetAtt GitHubActionsRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-GitHubActionsRoleArn'
+
+  GitHubOIDCProviderArn:
+    Description: ARN of the GitHub OIDC Provider
+    Value: !Ref GitHubOIDCProvider
+    Export:
+      Name: !Sub '${AWS::StackName}-GitHubOIDCProviderArn'
+
+  CloudFormationServiceRoleArn:
+    Description: ARN of the CloudFormation Service Role
+    Value: !GetAtt CloudFormationServiceRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFormationServiceRoleArn'
+
+  PolicyArn:
+    Description: ARN of the GitHub Actions Policy
+    Value: !Ref GitHubActionsCFNPolicy
+    Export:
+      Name: !Sub '${AWS::StackName}-PolicyArn'
+
